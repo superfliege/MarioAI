@@ -96,63 +96,54 @@ class TrainingManager:
         """
         try:
             episode = len(self.agent.episode_rewards)
-            
             while self.is_training and episode < self.max_episodes:
                 episode_start_time = time.time()
-                
                 # Episode zurücksetzen
                 state = self.environment.reset()
                 episode_reward = 0
                 episode_length = 0
-                
                 print(f"\nEpisode {episode + 1}/{self.max_episodes} gestartet...")
-                
+                lives_display = f"{self.environment.lives_remaining} von 3 Leben"
+                print(f"  Leben: {lives_display}")
                 while self.is_training:
                     # Aktion auswählen
                     action = self.agent.select_action(state, training=True)
-                    
                     # Schritt in der Umgebung
                     next_state, reward, done, info = self.environment.step(action)
-                    
                     # Erfahrung speichern
                     self.agent.store_experience(state, action, reward, next_state, done)
-                    
                     # Training step
                     loss = self.agent.train_step()
-                    
                     # Update state
                     state = next_state
                     episode_reward += reward
                     episode_length += 1
-                    
+                    # Live-Statistik: Leben anzeigen
+                    if 'lives_remaining' in info:
+                        lives_display = f"{info['lives_remaining']} von 3 Leben"
+                        print(f"    Leben: {lives_display}", end='\r')
                     if done:
                         break
-                
                 # Episode Statistiken
                 self.agent.episode_rewards.append(episode_reward)
                 self.agent.episode_lengths.append(episode_length)
-                
                 episode_duration = time.time() - episode_start_time
-                
-                print(f"Episode {episode + 1} beendet:")
+                print(f"\nEpisode {episode + 1} beendet:")
                 print(f"  Reward: {episode_reward:.2f}")
                 print(f"  Länge: {episode_length} Steps")
                 print(f"  Epsilon: {self.agent.epsilon:.3f}")
                 print(f"  Dauer: {episode_duration:.1f}s")
                 print(f"  Max X Position: {info.get('max_x_position', 0):.2f}")
-                
+                print(f"  Leben: {info.get('lives_remaining', 0)} von 3 Leben")
                 # Periodisches Speichern
                 current_time = time.time()
                 if current_time - self.last_save_time > self.save_interval:
                     self._save_model()
                     self.last_save_time = current_time
-                
                 episode += 1
-            
             # Training beendet
             self._save_model()
             print(f"\nTraining nach {episode} Episoden beendet!")
-            
         except Exception as e:
             print(f"Fehler beim Training: {e}")
         finally:

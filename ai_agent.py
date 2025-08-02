@@ -220,27 +220,76 @@ class DQNAgent:
             'episode_lengths': self.episode_lengths,
             'losses': self.losses
         }, filepath)
-        print(f"Modell gespeichert: {filepath}")
-    
+        print(f"Modell gespeichert: {filepath}")    
     def load_model(self, filepath: str):
         """
         Lädt ein gespeichertes Modell
         """
         try:
-            checkpoint = torch.load(filepath, map_location=self.device)
+            # Mehrere Ansätze zum Laden des Modells
+            checkpoint = None
+            load_methods = [
+                # Methode 1: Standard PyTorch Load
+                lambda: torch.load(filepath, map_location=self.device),
+                # Methode 2: Mit weights_only=False
+                lambda: torch.load(filepath, map_location=self.device, weights_only=False),
+                # Methode 3: Mit pickle_module
+                lambda: torch.load(filepath, map_location=self.device, pickle_module=torch.utils.data.get_worker_info()),
+                # Methode 4: Legacy Load
+                lambda: torch.load(filepath, map_location=self.device, encoding='latin1')
+            ]
+            
+            for i, method in enumerate(load_methods):
+                try:
+                    checkpoint = method()
+                    print(f"Modell geladen mit Methode {i+1}")
+                    break
+                except Exception as method_error:
+                    if i == len(load_methods) - 1:  # Letzter Versuch
+                        raise method_error
+                    continue
+            
+            if checkpoint is None:
+                raise Exception("Alle Lade-Methoden fehlgeschlagen")
+            
+            # Netzwerk-States laden
             self.q_network.load_state_dict(checkpoint['q_network_state_dict'])
             self.target_network.load_state_dict(checkpoint['target_network_state_dict'])
-            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            self.epsilon = checkpoint['epsilon']
-            self.steps_done = checkpoint['steps_done']
-            self.episode_rewards = checkpoint['episode_rewards']
-            self.episode_lengths = checkpoint['episode_lengths']
-            self.losses = checkpoint['losses']
-            print(f"Modell geladen: {filepath}")
+            
+            # Optimizer laden (optional, falls fehlerhaft)
+            try:
+                self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            except Exception as opt_error:
+                print(f"Warnung: Optimizer konnte nicht geladen werden: {opt_error}")
+                print("Training wird mit neuen Optimizer-Parametern fortgesetzt")
+            
+            # Andere Parameter laden
+            self.epsilon = checkpoint.get('epsilon', self.epsilon_start)
+            self.steps_done = checkpoint.get('steps_done', 0)
+            self.episode_rewards = checkpoint.get('episode_rewards', [])
+            self.episode_lengths = checkpoint.get('episode_lengths', [])
+            self.losses = checkpoint.get('losses', [])
+            
+            print(f"Modell erfolgreich geladen: {filepath}")
+            print(f"  - Episoden: {len(self.episode_rewards)}")
+            print(f"  - Steps: {self.steps_done}")
+            print(f"  - Epsilon: {self.epsilon:.4f}")
             return True
+            
         except Exception as e:
             print(f"Fehler beim Laden des Modells: {e}")
-            return False
+            print("Versuche, nur die Netzwerk-Gewichte zu laden...")
+            
+            # Fallback: Nur Netzwerk-Gewichte laden
+            try:
+                checkpoint = torch.load(filepath, map_location=self.device, weights_only=False)
+                self.q_network.load_state_dict(checkpoint['q_network_state_dict'])
+                self.target_network.load_state_dict(checkpoint['target_network_state_dict'])
+                print("Nur Netzwerk-Gewichte wurden geladen. Training beginnt mit Standard-Parametern.")
+                return True
+            except Exception as final_error:
+                print(f"Auch das Laden der Netzwerk-Gewichte fehlgeschlagen: {final_error}")
+                return False
     
     def plot_training_stats(self):
         """
@@ -288,7 +337,7 @@ class DQNAgent:
         """
         Gibt aktuelle Trainingsstatistiken zurück
         """
-        return {
+        stats = {
             'episodes': len(self.episode_rewards),
             'total_steps': self.steps_done,
             'epsilon': self.epsilon,
@@ -296,3 +345,7 @@ class DQNAgent:
             'avg_length_last_100': np.mean(self.episode_lengths[-100:]) if self.episode_lengths else 0,
             'avg_loss_last_100': np.mean(self.losses[-100:]) if self.losses else 0
         }
+        # Life-Anzeige aus Environment holen, falls verfügbar
+        if hasattr(self, 'environment') and hasattr(self.environment, 'lives_remaining'):
+            stats['lives_display'] = f"{self.environment.lives_remaining} von 3 Leben"
+        return stats

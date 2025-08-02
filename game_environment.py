@@ -37,10 +37,24 @@ class GameEnvironment:
         self.last_frame = None
         self.death_detection_threshold = 0.95  # Ähnlichkeit für Toddetektion
         
+        # Leben-System (3 Leben pro Game)
+        self.lives_remaining = 3
+        self.total_deaths = 0  # Gesamt-Tode für Statistiken
+        self.death_screen_start_time = None
+        self.waiting_after_death = False
+        self.game_over_state = False
+        self.waiting_for_game_restart = False
     def reset(self) -> np.ndarray:
         """
         Setzt die Umgebung zurück für eine neue Episode
         """
+        # Nur bei echtem Reset (nicht nach Tod) Leben zurücksetzen
+        if not self.waiting_after_death and not self.waiting_for_game_restart:
+            self.lives_remaining = 3
+            self.total_deaths = 0
+            self.game_over_state = False
+            print(f"\n🆕 [Episode {getattr(self, 'current_episode', 1)}] Starting fresh game with 3 lives...")
+        
         # Frame Stack leeren und mit ersten Frames füllen
         self.frame_stack.clear()
         
@@ -67,23 +81,31 @@ class GameEnvironment:
         self.episode_reward = 0
         self.last_frame = current_frame.copy()
         
+        # Death Screen States zurücksetzen
+        self.death_screen_start_time = None
+        self.waiting_after_death = False
+        self.waiting_for_game_restart = False
+        
         # Episode-Counter erhöhen (für Debug-Ausgaben)
         if not hasattr(self, 'current_episode'):
             self.current_episode = 1
         else:
             self.current_episode += 1
         
-        print(f"\n🆕 [Episode {self.current_episode}] Starting new episode...")
+        print(f"🆕 [Episode {self.current_episode}] Starting - Lives: {self.lives_remaining}/3")
         
         # Alle Tasten loslassen
         self.game_controller.perform_action(Action.NOTHING)
         
         return self._get_state()
-    
     def step(self, action_index: int) -> Tuple[np.ndarray, float, bool, dict]:
         """
         Führt eine Aktion aus und gibt den neuen Zustand zurück
         """
+        # Prüfe ob wir in einem Death Screen warten müssen
+        if self.waiting_after_death or self.waiting_for_game_restart:
+            return self._handle_death_recovery()
+        
         action = Action(action_index)
         
         # Aktion mehrfach wiederholen für bessere Kontrolle
@@ -115,7 +137,9 @@ class GameEnvironment:
             'episode_length': self.episode_length,
             'episode_reward': self.episode_reward,
             'max_x_position': self.max_x_position,
-            'frames_since_progress': self.frames_since_progress
+            'frames_since_progress': self.frames_since_progress,
+            'lives_remaining': self.lives_remaining,
+            'total_deaths': self.total_deaths
         }
         
         return self._get_state(), total_reward, done, info
@@ -175,8 +199,7 @@ class GameEnvironment:
             if self._is_death_screen(current_frame):
                 reward -= 10.0  # Große Strafe für Death Screen
                 debug_messages.append("💀 Death Screen Punishment: -10.00")
-        
-        # Debug-Ausgaben anzeigen (nur wenn signifikante Rewards/Punishments)
+          # Debug-Ausgaben anzeigen (nur wenn signifikante Rewards/Punishments)
         significant_messages = [msg for msg in debug_messages if not msg.startswith("💖")]
         if significant_messages:
             episode_num = getattr(self, 'current_episode', 'N/A')
@@ -206,7 +229,7 @@ class GameEnvironment:
         gradient_x = np.gradient(right_half, axis=1)
         position_estimate = np.sum(np.abs(gradient_x)) / 1000.0  # Normalisierung
         
-        return position_estimate
+        return position_estimate    
     def _check_episode_end(self) -> bool:
         """
         Überprüft ob die Episode beendet werden soll
@@ -223,34 +246,49 @@ class GameEnvironment:
             print(f"[Episode {episode_num}] ⏰ Episode ended: No progress for {self.max_frames_without_progress} frames")
             return True
         
-        # Tod-Detection (vereinfacht durch Frame-Vergleich)
-        if self._detect_death():
-            episode_num = getattr(self, 'current_episode', 'N/A')
-            print(f"[Episode {episode_num}] 💀 Punishment for dead: Episode ended due to death detection")
-            return True
+        # Tod-Detection: Nur wenn keine Recovery läuft
+        if not self.waiting_after_death and not self.waiting_for_game_restart:
+            if self._detect_death():
+                return self._handle_death_detected()
         
+        return False
+    
+    def _handle_death_detected(self) -> bool:
+        """
+        Behandelt den Tod: Setzt Recovery-Flags und startet Recovery, beendet aber NICHT sofort die Episode!
+        """
+        episode_num = getattr(self, 'current_episode', 'N/A')
+        self.total_deaths += 1
+        print(f"💀 [Episode {episode_num}] Death detected!")
+        if self.lives_remaining > 1:
+            self.lives_remaining -= 1
+            self.waiting_after_death = True
+            self.death_screen_start_time = time.time()
+        else:
+            self.lives_remaining = 0
+            self.waiting_for_game_restart = True
+            self.death_screen_start_time = time.time()
+        # NICHT sofort die Episode beenden!
         return False
     def _detect_death(self) -> bool:
         """
         Erweiterte Toddetektion durch Erkennung von schwarzen Bildschirmen und Bildvergleich
         """
+        # Während Recovery keine Death Detection!
+        if self.waiting_after_death or self.waiting_for_game_restart:
+            return False
         if len(self.frame_stack) < 2:
             return False
-        
         current_frame = self.frame_stack[-1]
-        
         # 1. Death Screen Erkennung: Überprüfe ob Bildschirm überwiegend schwarz ist
         if self._is_death_screen(current_frame):
             return True
-        
         # 2. Plötzliche Bildveränderung (ursprüngliche Methode)
         previous_frame = self.frame_stack[-2]
         diff = np.abs(current_frame - previous_frame)
-        
         # Wenn sich das Bild plötzlich stark ändert, könnte es ein Tod sein
         if np.mean(diff) > 0.3:  # Threshold für starke Veränderung
             return True
-        
         return False
     
     def _is_death_screen(self, frame: np.ndarray, black_threshold: float = 0.15, 
@@ -327,3 +365,166 @@ class GameEnvironment:
         Aufräumen am Ende
         """
         self.game_controller.cleanup()
+    
+    def _handle_death_recovery(self) -> Tuple[np.ndarray, float, bool, dict]:
+        """
+        Behandelt die Recovery nach einem Death Screen
+        """
+        # Aktuellen Frame holen
+        current_frame = self.screen_capture.get_processed_frame()
+        if current_frame is not None:
+            self.frame_stack.append(current_frame)
+        
+        # Prüfe ob wir nach Game Over warten (3 Tode erreicht)
+        if self.waiting_for_game_restart:
+            return self._handle_game_over_recovery()
+        
+        # Prüfe ob wir nach einem einzelnen Tod warten
+        if self.waiting_after_death:
+            return self._handle_single_death_recovery()
+        
+        # Fallback
+        return self._get_state(), 0.0, False, {
+            'lives_remaining': self.lives_remaining,
+            'total_deaths': self.total_deaths,
+            'episode_length': self.episode_length,
+            'episode_reward': self.episode_reward
+        }
+    
+    def _handle_single_death_recovery(self) -> Tuple[np.ndarray, float, bool, dict]:
+        """
+        Behandelt Recovery nach einem einzelnen Tod (noch Leben übrig)
+        """
+        current_time = time.time()
+        current_frame = self.frame_stack[-1] if len(self.frame_stack) > 0 else None
+
+        # Prüfe ob der Death Screen vorbei ist (nicht mehr überwiegend schwarz)
+        if current_frame is not None and not self._is_death_screen(current_frame):
+            # Death Screen ist vorbei, jetzt explizit 3 Sekunden warten
+            if not hasattr(self, '_single_death_wait_start') or self._single_death_wait_start is None:
+                self._single_death_wait_start = current_time
+                print(f"🕒 [Episode {self.current_episode}] Death screen cleared - waiting 3s before continue")
+                return self._get_state(), 0.0, False, {
+                    'lives_remaining': self.lives_remaining,
+                    'total_deaths': self.total_deaths,
+                    'episode_length': self.episode_length,
+                    'episode_reward': self.episode_reward
+                }
+            elif current_time - self._single_death_wait_start < 3.0:
+                # Noch nicht genug gewartet
+                return self._get_state(), 0.0, False, {
+                    'lives_remaining': self.lives_remaining,
+                    'total_deaths': self.total_deaths,
+                    'episode_length': self.episode_length,
+                    'episode_reward': self.episode_reward
+                }
+            else:
+                # 3 Sekunden sind vorbei, weiterspielen
+                print(f"💚 [Episode {self.current_episode}] Waited 3s after death screen - Continuing with {self.lives_remaining} lives")
+                self.waiting_after_death = False
+                self.death_screen_start_time = None
+                self._single_death_wait_start = None
+                self.last_x_position = 0
+                self.max_x_position = 0
+                self.frames_since_progress = 0
+                return self._get_state(), 0.1, False, {
+                    'lives_remaining': self.lives_remaining,
+                    'total_deaths': self.total_deaths,
+                    'episode_length': self.episode_length,
+                    'episode_reward': self.episode_reward
+                }
+
+        # Immer noch im Death Screen - weiter warten
+        elapsed_time = current_time - self.death_screen_start_time
+        if elapsed_time > 10.0:  # Max 10 Sekunden warten
+            print(f"⚠️ [Episode {self.current_episode}] Death screen timeout after 10s - forcing continue")
+            self.waiting_after_death = False
+            self.death_screen_start_time = None
+            self._single_death_wait_start = None
+        return self._get_state(), 0.0, False, {
+            'lives_remaining': self.lives_remaining,
+            'total_deaths': self.total_deaths,
+            'episode_length': self.episode_length,
+            'episode_reward': self.episode_reward
+        }
+    
+    def _handle_game_over_recovery(self) -> Tuple[np.ndarray, float, bool, dict]:
+        """
+        Behandelt Recovery nach Game Over (alle 3 Leben verloren)
+        """
+        current_time = time.time()
+        current_frame = self.frame_stack[-1] if len(self.frame_stack) > 0 else None
+        elapsed_time = current_time - self.death_screen_start_time if self.death_screen_start_time else 0
+
+        # Phase 1: Warten bis Screen nicht mehr schwarz ist
+        if current_frame is not None and self._is_death_screen(current_frame):
+            if not hasattr(self, '_game_over_wait_phase') or self._game_over_wait_phase != 1:
+                self._game_over_wait_phase = 1
+                self._game_over_wait_start = None
+            return self._get_state(), 0.0, False, {
+                'lives_remaining': 0,
+                'total_deaths': self.total_deaths,
+                'episode_length': self.episode_length,
+                'episode_reward': self.episode_reward
+            }
+        # Phase 2: Screen ist nicht mehr schwarz - warte 2 Sekunden, dann ENTER
+        if (not hasattr(self, '_game_over_wait_phase') or self._game_over_wait_phase == 1) and current_frame is not None and not self._is_death_screen(current_frame):
+            if not hasattr(self, '_game_over_wait_start') or self._game_over_wait_start is None:
+                self._game_over_wait_start = current_time
+                self._game_over_wait_phase = 2  # <--- Fix: set phase to 2 here
+                print(f"🕒 [Episode {self.current_episode}] Game over screen cleared - waiting 2s before ENTER")
+                return self._get_state(), 0.0, False, {
+                    'lives_remaining': 0,
+                    'total_deaths': self.total_deaths,
+                    'episode_length': self.episode_length,
+                    'episode_reward': self.episode_reward
+                }
+        # Phase 2: Warten bis 2 Sekunden vorbei, dann ENTER
+        if hasattr(self, '_game_over_wait_phase') and self._game_over_wait_phase == 2:
+            if current_time - self._game_over_wait_start < 2.0:
+                return self._get_state(), 0.0, False, {
+                    'lives_remaining': 0,
+                    'total_deaths': self.total_deaths,
+                    'episode_length': self.episode_length,
+                    'episode_reward': self.episode_reward
+                }
+            else:
+                print(f"🔄 [Episode {self.current_episode}] Waited 2s - pressing 'i' to restart")
+                self.game_controller.press_key('i')
+                self._game_over_wait_phase = 3
+                self._game_over_wait_start = current_time
+                return self._get_state(), 0.0, False, {
+                    'lives_remaining': 0,
+                    'total_deaths': self.total_deaths,
+                    'episode_length': self.episode_length,
+                    'episode_reward': self.episode_reward
+                }
+        # Phase 3: Nach ENTER 3-4 Sekunden warten, dann neues Spiel
+        if hasattr(self, '_game_over_wait_phase') and self._game_over_wait_phase == 3:
+            if current_time - self._game_over_wait_start < 3.5:
+                return self._get_state(), 0.0, False, {
+                    'lives_remaining': 0,
+                    'total_deaths': self.total_deaths,
+                    'episode_length': self.episode_length,
+                    'episode_reward': self.episode_reward
+                }
+            else:
+                print(f"🎮 [Episode {self.current_episode}] Waited 3.5s after ENTER - New game started - Episode completed")
+                self.waiting_for_game_restart = False
+                self.death_screen_start_time = None
+                self._game_over_wait_phase = None
+                self._game_over_wait_start = None
+                return self._get_state(), 0.0, True, {
+                    'lives_remaining': 3,
+                    'total_deaths': self.total_deaths,
+                    'episode_length': self.episode_length,
+                    'episode_reward': self.episode_reward,
+                    'game_over_recovery': True
+                }
+        # Fallback
+        return self._get_state(), 0.0, False, {
+            'lives_remaining': 0,
+            'total_deaths': self.total_deaths,
+            'episode_length': self.episode_length,
+            'episode_reward': self.episode_reward
+        }

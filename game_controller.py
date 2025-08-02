@@ -195,12 +195,43 @@ class GameController:
         
         print("\n✅ Simulierte Eingaben Test beendet!")
     
+    def press_enter(self):
+        """
+        Drückt die ENTER-Taste (für Game Over Recovery)
+        """
+        try:
+            print("🔄 Pressing ENTER key...")
+            pyautogui.press('enter')
+            time.sleep(0.1)
+            
+            # Zusätzlich mit keyboard library versuchen
+            try:
+                keyboard.press_and_release('enter')
+            except:
+                pass
+                
+        except Exception as e:
+            print(f"❌ Error pressing ENTER: {e}")
+    
     def cleanup(self):
         """
         Räumt auf und lässt alle Tasten los
         """
         self._release_all_keys()
         pyautogui.FAILSAFE = True  # Failsafe wieder aktivieren
+    
+    def press_key(self, key: str):
+        """
+        Simuliert das Drücken einer einzelnen Taste (z.B. 'i')
+        """
+        # Beispiel mit pyautogui (falls installiert):
+        try:
+            import pyautogui
+            pyautogui.press(key)
+        except ImportError:
+            print(f"[GameController] Taste '{key}' simulieren nicht möglich: pyautogui nicht installiert.")
+        except Exception as e:
+            print(f"[GameController] Fehler beim Simulieren der Taste '{key}': {e}")
 
 
 class ManualController:
