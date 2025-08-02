@@ -250,11 +250,9 @@ class MarioAIGUI:
             self.training_manager.stop_training()
             self.training_button.config(text="Training starten")
             self.update_status("Training gestoppt")
-            self.stop_stats_update()
+            self.stop_stats_update()    
+        
     def test_agent(self):
-        """
-        Testet den trainierten Agent
-        """
         if self.agent_testing:
             messagebox.showwarning("Warnung", "Agent-Test läuft bereits!")
             return
@@ -264,11 +262,13 @@ class MarioAIGUI:
         
         self.agent_testing = True
         self.test_stop_button.config(state=tk.NORMAL)
+        self.update_status("Agent wird getestet...")
         
-        # Test in separatem Thread ausführen
-        test_thread = threading.Thread(target=self._run_test)
-        test_thread.daemon = True
-        test_thread.start()
+        # Training Manager startet den Test in seinem eigenen Thread
+        self.training_manager.test_agent(episodes=3)
+        
+        # Überwache den Test-Status
+        self._monitor_test_status()
     
     def stop_agent_test(self):
         """
@@ -280,20 +280,24 @@ class MarioAIGUI:
             self.test_stop_button.config(state=tk.DISABLED)
             self.update_status("Agent-Test gestoppt")
     
-    def _run_test(self):
+    def _monitor_test_status(self):
         """
-        Führt den Agent-Test aus
+        Überwacht den Test-Status und aktualisiert die GUI entsprechend
         """
-        try:
-            self.update_status("Agent wird getestet...")
-            self.training_manager.test_agent(episodes=3)
-            self.update_status("Agent-Test abgeschlossen")
-        except Exception as e:
-            messagebox.showerror("Fehler", f"Fehler beim Testen: {e}")
-            self.update_status("Fehler beim Testen")
-        finally:
+        if self.training_manager and hasattr(self.training_manager, 'is_testing'):
+            if self.training_manager.is_testing:
+                # Test läuft noch, plane nächste Überprüfung
+                self.root.after(1000, self._monitor_test_status)  # Prüfe jede Sekunde
+            else:
+                # Test ist beendet
+                self.agent_testing = False
+                self.test_stop_button.config(state=tk.DISABLED)
+                self.update_status("Agent-Test abgeschlossen")
+        else:
+            # Fallback: Test ist beendet
             self.agent_testing = False
             self.test_stop_button.config(state=tk.DISABLED)
+            self.update_status("Agent-Test abgeschlossen")
     
     def start_video_display(self):
         """
