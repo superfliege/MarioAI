@@ -25,10 +25,9 @@ class GameController:
         # Automatische Failsafe deaktivieren für bessere Performance
         pyautogui.FAILSAFE = False
         pyautogui.PAUSE = 0.01  # Minimale Pause zwischen Aktionen
-        
-        # Mapping von Aktionen auf Tasten
+          # Mapping von Aktionen auf Tasten
         self.action_keys = {
-            Action.LEFT: 'w',     # Links mit Taste W
+            Action.LEFT: 'a',     # Links mit Taste A
             Action.RIGHT: 'd',    # Rechts mit Taste D
             Action.JUMP: 'v',     # Springen mit Taste V
             Action.DOWN: 'down'   # Down bleibt Pfeiltaste (falls benötigt)
@@ -140,10 +139,10 @@ class GameController:
     def test_keys(self):
         """
         Testet alle Tasten für 2 Sekunden jede
-        """
+        """        
         print("=== TASTENEINGABE TEST ===")
         print("Teste alle Aktionen für je 2 Sekunden...")
-        print("W=Links, D=Rechts, V=Springen")
+        print("A=Links, D=Rechts, V=Springen")
         
         actions_to_test = [Action.RIGHT, Action.LEFT, Action.JUMP, Action.DOWN]
         
@@ -175,13 +174,12 @@ class GameController:
         time.sleep(1)
         pyautogui.keyUp('d')
         time.sleep(0.5)
-        
         print("\n🔸 Test 2: Keyboard Library Simulation")
-        print("Drücke W (LINKS) für 1 Sekunde...")
+        print("Drücke A (LINKS) für 1 Sekunde...")
         try:
-            keyboard.press('w')
+            keyboard.press('a')
             time.sleep(1)
-            keyboard.release('w')
+            keyboard.release('a')
         except Exception as e:
             print(f"Keyboard Library Fehler: {e}")
         time.sleep(0.5)
@@ -212,27 +210,122 @@ class GameController:
                 
         except Exception as e:
             print(f"❌ Error pressing ENTER: {e}")
-    
     def cleanup(self):
         """
         Räumt auf und lässt alle Tasten los
         """
         self._release_all_keys()
         pyautogui.FAILSAFE = True  # Failsafe wieder aktivieren
-    
     def press_key(self, key: str):
         """
-        Simuliert das Drücken einer einzelnen Taste (z.B. 'i')
+        Drückt eine beliebige Taste (für Game Over Recovery etc.)
+        Optimiert für Mario-Spiel mit mehreren Fallback-Mechanismen
         """
-        # Beispiel mit pyautogui (falls installiert):
         try:
-            import pyautogui
-            pyautogui.press(key)
-        except ImportError:
-            print(f"[GameController] Taste '{key}' simulieren nicht möglich: pyautogui nicht installiert.")
+            print(f"🔄 Pressing key '{key}'...")
+            
+            # Spezielle Behandlung für 'i' Taste (Mario restart)
+            if key.lower() == 'i':
+                return self._press_mario_restart_key()
+            
+            # Mehrere Methoden versuchen für bessere Kompatibilität
+            success = False
+            
+            # Methode 1: PyAutoGUI press (kurz drücken und loslassen)
+            try:
+                pyautogui.press(key)
+                print(f"✅ PyAutoGUI press '{key}' successful")
+                success = True
+            except Exception as e1:
+                print(f"⚠️ PyAutoGUI press failed: {e1}")
+            
+            # Methode 2: PyAutoGUI keyDown/keyUp (länger gedrückt halten)
+            try:
+                pyautogui.keyDown(key)
+                time.sleep(0.2)  # Länger halten für bessere Erkennung
+                pyautogui.keyUp(key)
+                print(f"✅ PyAutoGUI keyDown/keyUp '{key}' successful")
+                success = True
+            except Exception as e2:
+                print(f"⚠️ PyAutoGUI keyDown/keyUp failed: {e2}")
+            
+            # Methode 3: Keyboard Library
+            try:
+                keyboard.press_and_release(key)
+                print(f"✅ Keyboard library '{key}' successful")
+                success = True
+            except Exception as e3:
+                print(f"⚠️ Keyboard library failed: {e3}")
+            
+            # Methode 4: Keyboard Library mit hold
+            try:
+                keyboard.press(key)
+                time.sleep(0.2)
+                keyboard.release(key)
+                print(f"✅ Keyboard library hold '{key}' successful")
+                success = True
+            except Exception as e4:
+                print(f"⚠️ Keyboard library hold failed: {e4}")
+                
+            if not success:
+                print(f"❌ All methods failed for key '{key}'")
+            else:
+                print(f"🎯 Key '{key}' pressed successfully with at least one method")
+                
+            # Zusätzliche Wartezeit nach dem Tastendruck
+            time.sleep(0.3)
+                
         except Exception as e:
-            print(f"[GameController] Fehler beim Simulieren der Taste '{key}': {e}")
+            print(f"❌ Critical error pressing key '{key}': {e}")
 
+    def _press_mario_restart_key(self):
+        """
+        Speziell optimierte Methode für die Mario Restart 'i' Taste
+        """
+        print("🎮 Attempting Mario restart with 'i' key...")
+        success_count = 0
+
+            
+        # Methode 1: PyAutoGUI mit verschiedenen Timings
+        try:
+            pyautogui.keyDown('i')
+            time.sleep(0.5)  # Länger halten für Mario
+            pyautogui.keyUp('i')
+            success_count += 1
+            print(f"  ✅ PyAutoGUI attempt {attempt + 1} successful")
+        except Exception as e:
+            print(f"  ⚠️ PyAutoGUI attempt {attempt + 1} failed: {e}")
+        
+        time.sleep(0.2)
+        
+        # Methode 2: Keyboard Library
+        try:
+            keyboard.press('i')
+            time.sleep(0.5)
+            keyboard.release('i')
+            success_count += 1
+            print(f"  ✅ Keyboard library attempt {attempt + 1} successful")
+        except Exception as e:
+            print(f"  ⚠️ Keyboard library attempt {attempt + 1} failed: {e}")
+        
+        time.sleep(0.3)
+        
+        # Methode 3: Kurzer Tastendruck
+        try:
+            pyautogui.press('i')
+            success_count += 1
+            print(f"  ✅ Quick press attempt {attempt + 1} successful")
+        except Exception as e:
+            print(f"  ⚠️ Quick press attempt {attempt + 1} failed: {e}")
+    
+        if success_count > 0:
+            print(f"🎯 Mario restart key pressed successfully ({success_count} methods worked)")
+        else:
+            print("❌ All Mario restart key methods failed")
+        
+        # Längere Wartezeit nach Mario restart key
+        time.sleep(1.0)
+        
 
 class ManualController:
     """
@@ -247,12 +340,12 @@ class ManualController:
         """
         Startet die manuelle Steuerung
         """        
-        self.is_active = True
-        print("Manuelle Steuerung gestartet. W=Links, D=Rechts, V=Springen, ESC=Beenden.")
+        self.is_active = True        
+        print("Manuelle Steuerung gestartet. A=Links, D=Rechts, V=Springen, ESC=Beenden.")
         
         while self.is_active:
             try:
-                if keyboard.is_pressed('w'):
+                if keyboard.is_pressed('a'):
                     self.game_controller.perform_action(Action.LEFT)
                 elif keyboard.is_pressed('d'):
                     self.game_controller.perform_action(Action.RIGHT)

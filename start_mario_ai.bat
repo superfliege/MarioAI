@@ -21,7 +21,7 @@ if not exist ".venv" (
     python -m venv .venv
     if errorlevel 1 (
         echo FEHLER: Konnte Virtual Environment nicht erstellen.
-        pause
+        pausevvvvvvv
         exit /b 1
     )
 )
